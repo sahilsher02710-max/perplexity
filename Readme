@@ -1,0 +1,136 @@
+Purplexity
+A lightweight, Perplexity-style AI search assistant built with
+Express, Tavily, and the Vercel AI SDK. It accepts a user
+query, searches the web for relevant information, combines the search
+results with a prompt template, and streams an AI-generated answer back
+to the client along with source data.
+How It Works
+```mermaid
+flowchart TD
+    A[User Query] --> B[Tavily Web Search]
+    B --> C[Prompt Template]
+    C --> D[OpenAI LLM - streamText]
+    D --> E[Stream Answer + Sources]
+```
+1. User Query --- The client sends a question to the backend.
+2. Tavily Web Search --- Tavily searches the web and returns
+   relevant results.
+3. Prompt Template --- The search results and user query are
+   inserted into the prompt.
+4. OpenAI LLM --- The Vercel AI SDK sends the prompt to the
+   configured OpenAI model.
+5. Stream Answer + Sources --- The backend streams generated text
+   and then appends the search sources.
+Tech Stack
+- Runtime: Bun (or Node.js)
+- Backend: Express
+- Language: TypeScript
+- Web search: Tavily JavaScript SDK (@tavily/core)
+- LLM integration: Vercel AI SDK (ai)
+- Model provider: OpenAI (@ai-sdk/openai)
+- Validation library: Zod (zod)
+Project Structure
+be/
+├── index.ts       # Express server, search request, and AI streaming
+├── prompt.ts      # System prompt and prompt template
+├── .env           # API keys (create this locally; do not commit it)
+├── package.json
+└── tsconfig.json  # TypeScript configuration, if present
+Getting Started
+1. Prerequisites
+Install:
+- Bun (recommended), or Node.js and npm
+- A Tavily API key
+- An OpenAI API key
+2. Install dependencies
+From the backend directory:
+cd be
+bun install
+If you are setting up the dependencies manually:
+bun add express zod ai @ai-sdk/openai @tavily/core dotenv
+bun add -d typescript @types/express @types/node
+3. Configure environment variables
+Create a .env file inside be/:
+TAVILY_API_KEY=your_tavily_api_key
+OPENAI_API_KEY=your_openai_api_key
+Do not commit .env or expose API keys in frontend code. Add .env to
+.gitignore.
+4. Run the backend
+If the project uses Bun:
+bun run index.ts
+The server listens on:
+http://localhost:3000
+Make sure environment variables are loaded before the server creates the
+Tavily client. For example, add this at the top of index.ts:
+import "dotenv/config";
+API
+Ask a question
+Endpoint
+POST /perplexity_ask
+Content-Type: application/json
+Request body
+{
+  "query": "What is artificial intelligence?"
+}
+Example using cURL
+curl -N -X POST http://localhost:3000/perplexity_ask \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is artificial intelligence?"}'
+The endpoint validates that query is a non-empty string, searches
+Tavily, builds the prompt, and streams the model output. The current
+implementation appends source-result JSON after the generated answer.
+Streaming note: The current endpoint uses a plain-text streaming
+response. The answer and source data are therefore part of the same
+response stream, not a separate structured JSON object. If your
+frontend needs separately addressable answer, sources, and follow-up
+questions, consider implementing Server-Sent Events (SSE) or another
+explicit response protocol.
+
+Prompt Configuration
+The backend imports two exports from prompt.ts:
+- SYSTEM_PROMPT --- Defines the assistant's role and response
+  instructions.
+- PROMPT_TEMPLATE --- Contains {{WEB_SEARCH_RESULTS}} and
+  {{USER_QUERY}} placeholders.
+Ensure the placeholder names in prompt.ts exactly match the names used
+by .replace() in index.ts.
+Current Status
+The initial backend flow is:
+- [x] Accept a user query through Express
+- [x] Search the web using Tavily
+- [x] Insert search results into a prompt template
+- [x] Generate and stream an answer using the AI SDK
+- [x] Append source results to the response
+- [ ] Add authentication and usage/credit checks
+- [ ] Cache results for similar queries
+- [ ] Return structured follow-up questions
+- [ ] Separate answer and sources using SSE or a structured API
+  response
+- [ ] Add request validation and automated tests
+Troubleshooting
+Cannot find module 'zod'
+
+Install the dependency:
+bun add zod
+Cannot find name 'streamText'
+
+Import it from the AI SDK:
+import { streamText } from "ai";
+forEach does not exist on TavilySearchResponse
+
+Iterate over the results array rather than the complete response object:
+webSearchResponse.results.forEach((result) => {
+  // Handle each search result
+});
+API key is undefined
+
+Check that .env is in the backend working directory and that
+import "dotenv/config"; runs before reading environment variables.
+Security
+- Keep all API keys on the backend.
+- Never commit .env.
+- Validate incoming request data.
+- Add rate limiting and authentication before deploying publicly.
+- Handle provider errors without exposing secrets or internal stack
+  traces.
+Add a license before distributing or publishing this project.
