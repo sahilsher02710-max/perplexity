@@ -5,15 +5,32 @@ import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
 import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
+const client = tavily({ apiKey: process.env.TAVILY_API_KEY});
 
 const app = express();
 
-const client = tavily({
-    apiKey: process.env.TAVILY_API_KEY,
-});
-
 app.use(express.json());
 
+
+app.post("/signup",async (req,res) => {
+    
+})
+
+app.post("/signin",async (req,res) => {
+
+})
+
+// past conversations get
+app.get("/conversations",async (req,res) =>{
+    
+})
+
+// past conversation get
+app.get("/conversation/:conversationId",async (req,res) =>{
+
+})
+
+ 
 app.post("/perplexity_ask", async (req, res) => {
     try {
         // Step 1 - Get the query from the user
