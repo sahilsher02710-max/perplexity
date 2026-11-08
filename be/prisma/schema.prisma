@@ -1,7 +1,7 @@
 
 generator client {
   provider = "prisma-client"
-  output   = "../generated/prisma"
+  output   = "./generated/prisma"
 }
 
 datasource db {
@@ -14,6 +14,7 @@ model User {
   email         String
   provider      AuthProvider
   name          String
+  supabaseId    String
   conversations Conversation[]
 }
 

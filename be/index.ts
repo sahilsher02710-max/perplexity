@@ -110,6 +110,6 @@ app.post("/purplexity_ask/follow_up",async(req,res) => {
     // Step 3 - Stream the response to the user.     ,  
 })
 
-app.listen(3000, () => {
-    console.log("Server running on http://localhost:3000");
+app.listen(3100, () => {
+    console.log("Server running on http://localhost:3100");
 });
