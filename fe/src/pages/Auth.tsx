@@ -18,7 +18,7 @@ export default function Auth(){
 
     
     
-    
+
     
     return <div>
         <Button onClick={()=>login("google")}>Login with google </Button> 

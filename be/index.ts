@@ -1,13 +1,20 @@
 import "dotenv/config";
+import cors from "cors";
 import express from "express";
 import { tavily } from "@tavily/core";
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
+const app = express();
+
+// Allow requests from frontend
+app.use(cors());
+
+app.use(express.json());
 
 import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
+import { middleware } from "./middleware";
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY});
 
-const app = express();
 
 app.use(express.json());
 
@@ -21,17 +28,19 @@ app.post("/signin",async (req,res) => {
 })
 
 // past conversations get
-app.get("/conversations",async (req,res) =>{
-    
+app.get("/conversations",middleware ,async (req,res) =>{
+    res.json({
+            userId: req.userId
+    })
 })
 
 // past conversation get
-app.get("/conversation/:conversationId",async (req,res) =>{
+app.get("/conversation/:conversationId",middleware ,async (req,res) =>{
 
 })
 
  
-app.post("/perplexity_ask", async (req, res) => {
+app.post("/perplexity_ask", middleware ,async (req, res) => {
     try {
         // Step 1 - Get the query from the user
         const query = req.body.query;
@@ -102,7 +111,7 @@ app.post("/perplexity_ask", async (req, res) => {
 });
 
 
-app.post("/purplexity_ask/follow_up",async(req,res) => {
+app.post("/purplexity_ask/follow_up",middleware ,async(req,res) => {
 
     // Step 1 - get the existinf chat from the db ,  
     // Step 2 - Forward the full history to the LLM 
