@@ -11,10 +11,10 @@ datasource db {
 // User model
 model User {
   id            String         @id @default(uuid())
-  email         String
+  email         String         @unique
   provider      AuthProvider
   name          String
-  supabaseId    String
+  supabaseId    String        @unique
   conversations Conversation[]
 }
 
