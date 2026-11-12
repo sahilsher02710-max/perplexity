@@ -56,7 +56,6 @@ app.get("/conversations", middleware, async (req, res) => {
     }
 });
 
-
 // 2. GET /conversation/:conversationId — get a single conversation with messages
 
 app.get("/conversation/:conversationId", middleware, async (req, res) => {
@@ -93,7 +92,6 @@ app.get("/conversation/:conversationId", middleware, async (req, res) => {
         res.status(500).json({ error: "Something went wrong" });
     }
 });
-
 
 // 3. POST /perplexity_ask — new question (creates a new conversation)
 
@@ -136,9 +134,12 @@ app.post("/perplexity_ask", middleware, async (req, res) => {
 
         // Step 4 - Hit the LLM and stream the response
         const result = streamText({
-            model: openai("gpt-5.4"),
+            model: openai("gpt-4o-mini"), // Check that your OPENAI_API_KEY in be/.env is valid
             prompt: prompt,
             system: SYSTEM_PROMPT,
+            onError({ error }) {
+                console.error("OpenAI Stream Error:", error);
+            },
         });
 
         // Set response headers
@@ -207,8 +208,6 @@ app.post("/perplexity_ask", middleware, async (req, res) => {
     }
 });
 
-
-
 // 4. POST /purplexity_ask/follow_up — follow-up on an existing conversation
 
 app.post("/purplexity_ask/follow_up", middleware, async (req, res) => {
@@ -275,9 +274,12 @@ app.post("/purplexity_ask/follow_up", middleware, async (req, res) => {
 
         // Step 3 - Hit the LLM with the full history and stream the response
         const result = streamText({
-            model: openai("gpt-5.4"),
+            model: openai("gpt-4o-mini"), // Check that your OPENAI_API_KEY in be/.env is valid
             messages: history,
             system: SYSTEM_PROMPT,
+            onError({ error }) {
+                console.error("OpenAI Stream Error:", error);
+            },
         });
 
         // Set response headers
