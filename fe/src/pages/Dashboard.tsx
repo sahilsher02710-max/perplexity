@@ -71,7 +71,11 @@ function getDomain(url: string): string {
 }
 
 // Very lightweight markdown → HTML renderer (no external deps)
-function renderMarkdown(md: string): string {
+function renderMarkdown(md: string, sources: Source[] = []): string {
+  // Build a URL→index map for citation linking
+  const sourceIndexMap = new Map<string, number>();
+  sources.forEach((s, i) => sourceIndexMap.set(s.url, i + 1));
+
   return md
     // fenced code blocks
     .replace(
@@ -84,14 +88,19 @@ function renderMarkdown(md: string): string {
       /`([^`]+)`/g,
       '<code class="bg-[#2a2c2c] text-emerald-300 px-1.5 py-0.5 rounded text-sm font-mono">$1</code>'
     )
+    // citation markers like [1], [2] — make them superscript badges
+    .replace(
+      /\[(\d+)\]/g,
+      '<sup><a href="#source-$1" class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#2a3a3a] hover:bg-teal-700 text-[9px] font-bold text-teal-300 hover:text-white no-underline transition-colors cursor-pointer ml-0.5" style="text-decoration:none">$1</a></sup>'
+    )
     // bold
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong class=\"font-semibold text-zinc-100\">$1</strong>")
     // italic
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     // headings
     .replace(
       /^#{3}\s(.+)$/gm,
-      '<h3 class="text-base font-semibold text-zinc-100 mt-5 mb-1">$1</h3>'
+      '<h3 class="text-base font-semibold text-zinc-100 mt-5 mb-2">$1</h3>'
     )
     .replace(
       /^#{2}\s(.+)$/gm,
@@ -104,17 +113,19 @@ function renderMarkdown(md: string): string {
     // unordered list items
     .replace(
       /^[-*]\s(.+)$/gm,
-      '<li class="ml-4 list-disc text-zinc-300">$1</li>'
+      '<li class="ml-4 list-disc text-zinc-300 leading-7">$1</li>'
     )
     // ordered list items
     .replace(
       /^\d+\.\s(.+)$/gm,
-      '<li class="ml-4 list-decimal text-zinc-300">$1</li>'
+      '<li class="ml-4 list-decimal text-zinc-300 leading-7">$1</li>'
     )
     // wrap adjacent <li> tags
-    .replace(/((<li[^>]*>.*?<\/li>\n?)+)/g, '<ul class="my-2 space-y-1">$1</ul>')
+    .replace(/((<li[^>]*>.*?<\/li>\n?)+)/g, '<ul class="my-3 space-y-1.5 pl-1">$1</ul>')
     // paragraph breaks
-    .replace(/\n{2,}/g, "</p><p class=\"text-zinc-300 leading-7\">")
+    .replace(/\n{2,}/g, "</p><p class=\"text-zinc-300 leading-7 mt-3\">")
+    // line breaks
+    .replace(/\n/g, "<br/>")
     // wrap in paragraph
     .replace(
       /^(.)/,
@@ -213,32 +224,46 @@ async function parseStream(
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SourceCard({ source }: { source: Source }) {
+function SourceCard({ source, index }: { source: Source; index: number }) {
   const favicon = getFavicon(source.url);
   const domain = getDomain(source.url);
   return (
     <a
+      id={`source-${index}`}
       href={source.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex flex-col gap-1.5 p-3 rounded-xl bg-[#202222] border border-[#2d2f2f] hover:border-[#3a3d3d] transition min-w-[180px] max-w-[220px] flex-shrink-0 group"
+      className="flex flex-col gap-2 p-3 rounded-xl bg-[#1e2020] border border-[#2d2f2f] hover:border-teal-700/50 hover:bg-[#222424] transition-all group cursor-pointer"
     >
-      <p className="text-xs text-zinc-200 font-medium line-clamp-2 group-hover:text-teal-400 transition-colors leading-4">
+      {/* Top row: index badge + domain */}
+      <div className="flex items-center gap-2">
+        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2a3535] text-teal-400 text-[10px] font-bold flex items-center justify-center">
+          {index}
+        </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {favicon && (
+            <img
+              src={favicon}
+              alt=""
+              className="w-3.5 h-3.5 rounded-sm object-contain flex-shrink-0"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+          )}
+          <span className="text-[10px] text-zinc-500 truncate group-hover:text-teal-500 transition-colors">{domain}</span>
+        </div>
+      </div>
+      {/* Title */}
+      <p className="text-xs text-zinc-300 font-medium line-clamp-2 group-hover:text-zinc-100 transition-colors leading-4">
         {source.title}
       </p>
-      <div className="flex items-center gap-1.5 mt-auto">
-        {favicon && (
-          <img
-            src={favicon}
-            alt=""
-            className="w-3.5 h-3.5 rounded-sm object-contain flex-shrink-0"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
-          />
-        )}
-        <span className="text-[10px] text-zinc-500 truncate">{domain}</span>
-      </div>
+      {/* Snippet */}
+      {source.content && (
+        <p className="text-[10px] text-zinc-500 line-clamp-2 leading-3.5 mt-auto">
+          {source.content.slice(0, 120)}…
+        </p>
+      )}
     </a>
   );
 }
@@ -258,53 +283,65 @@ function AnswerBlock({ html, isStreaming }: { html: string; isStreaming?: boolea
 }
 
 function TurnView({ turn }: { turn: ThreadTurn }) {
+  const hasSources = turn.sources.length > 0;
+  const showSourceSkeletons = turn.isStreaming && !hasSources;
+
   return (
-    <div className="flex flex-col gap-6 py-6 border-b border-[#2d2f2f] last:border-0">
-      {/* User query */}
+    <div className="flex flex-col gap-7 py-8 border-b border-[#242626] last:border-0">
+      {/* ── User Query ── */}
       <h2 className="text-2xl font-semibold text-zinc-100 tracking-tight leading-snug">
         {turn.query}
       </h2>
 
-      {/* Sources row — only show section when there are real sources OR a stream is in-flight */}
-      {(turn.sources.length > 0 || turn.isStreaming) && (
-        <div className="flex flex-col gap-2">
+      {/* ── Sources Section ── */}
+      {(hasSources || showSourceSkeletons) && (
+        <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 uppercase tracking-widest">
             <BookOpen size={12} />
             Sources
           </div>
-          {turn.sources.length > 0 ? (
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
-              {turn.sources.map((s, i) => (
-                <SourceCard key={i} source={s} />
+
+          {hasSources ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {turn.sources.slice(0, 6).map((s, i) => (
+                <SourceCard key={i} source={s} index={i + 1} />
               ))}
+              {turn.sources.length > 6 && (
+                <div className="flex items-center justify-center rounded-xl bg-[#1e2020] border border-[#2d2f2f] text-xs text-zinc-500 p-3 font-medium">
+                  +{turn.sources.length - 6} more
+                </div>
+              )}
             </div>
           ) : (
-            /* Skeleton placeholders — only while streaming, never for saved convs */
-            turn.isStreaming && (
-              <div className="flex gap-2">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="w-[180px] h-16 rounded-xl bg-[#202222] border border-[#2d2f2f] animate-pulse flex-shrink-0"
-                  />
-                ))}
-              </div>
-            )
+            /* Skeleton placeholders while streaming */
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="h-20 rounded-xl bg-[#1e2020] border border-[#2d2f2f] animate-pulse"
+                />
+              ))}
+            </div>
           )}
         </div>
       )}
 
-      {/* AI Answer */}
-      <div className="flex flex-col gap-2">
+      {/* ── AI Answer Section ── */}
+      <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-          <Sparkles size={12} />
-          Answer
+          <Sparkles size={12} className="text-teal-400" />
+          <span>Answer</span>
         </div>
+
         {turn.answer ? (
-          <AnswerBlock html={renderMarkdown(turn.answer)} isStreaming={turn.isStreaming} />
+          <div className="border-l-2 border-teal-700/40 pl-4">
+            <AnswerBlock
+              html={renderMarkdown(turn.answer, turn.sources)}
+              isStreaming={turn.isStreaming}
+            />
+          </div>
         ) : turn.isStreaming ? (
-          /* Spinner only while a live stream is in progress */
-          <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <div className="flex items-center gap-2 text-sm text-zinc-500 pl-4">
             <Loader2 size={14} className="animate-spin text-teal-400" />
             Searching the web…
           </div>
@@ -783,7 +820,7 @@ export default function Dashboard() {
           <>
             {/* Scrollable thread area */}
             <div className="flex-1 overflow-y-auto">
-              <div className="max-w-2xl mx-auto px-4 py-8">
+              <div className="max-w-3xl mx-auto px-6 py-10">
                 {activeConv.turns.map((turn, i) => (
                   <TurnView key={i} turn={turn} />
                 ))}
@@ -792,8 +829,8 @@ export default function Dashboard() {
             </div>
 
             {/* Fixed follow-up bar */}
-            <div className="border-t border-[#2d2f2f] bg-[#191a1a] px-4 py-3">
-              <div className="max-w-2xl mx-auto">
+            <div className="border-t border-[#2d2f2f] bg-[#191a1a]/90 backdrop-blur-sm px-4 py-3">
+              <div className="max-w-3xl mx-auto">
                 <div className="flex items-end gap-3 bg-[#202222] border border-[#333636] focus-within:border-zinc-600 rounded-2xl px-4 py-3 transition-colors">
                   <textarea
                     ref={followUpTextareaRef}

@@ -3,7 +3,15 @@ import cors from "cors";
 import express from "express";
 import { tavily } from "@tavily/core";
 import { streamText, type ModelMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+// Remove: import { openai } from "@ai-sdk/openai";
+import { google } from "@ai-sdk/google";
+
+const gateway = createOpenAI({
+    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, // your vck_... key
+    baseURL: "https://ai-gateway.vercel.sh/v1",
+});
+
 const app = express();
 
 // Allow requests from frontend
@@ -133,12 +141,13 @@ app.post("/perplexity_ask", middleware, async (req, res) => {
             .replace("{{USER_QUERY}}", query);
 
         // Step 4 - Hit the LLM and stream the response
+        // Inside POST /perplexity_ask
         const result = streamText({
-            model: openai("gpt-4o-mini"), // Check that your OPENAI_API_KEY in be/.env is valid
+            model: google("gemini-2.5-flash"),
             prompt: prompt,
             system: SYSTEM_PROMPT,
             onError({ error }) {
-                console.error("OpenAI Stream Error:", error);
+                console.error("Gemini Stream Error:", error);
             },
         });
 
@@ -273,12 +282,13 @@ app.post("/purplexity_ask/follow_up", middleware, async (req, res) => {
         history.push({ role: "user", content: followUpPrompt });
 
         // Step 3 - Hit the LLM with the full history and stream the response
+       // Inside POST /purplexity_ask/follow_up
         const result = streamText({
-            model: openai("gpt-4o-mini"), // Check that your OPENAI_API_KEY in be/.env is valid
+            model: google("gemini-2.5-flash"),
             messages: history,
             system: SYSTEM_PROMPT,
             onError({ error }) {
-                console.error("OpenAI Stream Error:", error);
+                console.error("Gemini Stream Error:", error);
             },
         });
 
