@@ -44,7 +44,13 @@ interface ActiveConversation {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// createClient() returns the singleton – no second GoTrueClient is created.
 const supabase = createClient();
+
+/** Strip <ANSWER>…</ANSWER> wrapper tags the LLM sometimes emits. */
+function stripAnswerTags(text: string): string {
+  return text.replace(/<\/?ANSWER>/gi, "").trim();
+}
 
 async function getJwt(): Promise<string | null> {
   const {
@@ -152,39 +158,38 @@ async function parseStream(
     const { done, value } = await reader.read();
     if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    buffer += chunk;
+    buffer += decoder.decode(value, { stream: true });
 
+    // ── Answer phase ──────────────────────────────────────────────────────
     if (phase === "answer") {
       const delimIdx = buffer.indexOf(SOURCE_DELIM);
       if (delimIdx !== -1) {
-        // flush everything before the delimiter as answer text
-        const answerPart = buffer.slice(0, delimIdx).replace(/\n\n$/, "");
+        // Everything before the delimiter is the complete answer text
+        const answerPart = stripAnswerTags(buffer.slice(0, delimIdx));
         if (answerPart) onChunk(answerPart);
         buffer = buffer.slice(delimIdx + SOURCE_DELIM.length);
         phase = "sources";
       } else {
-        // Stream answer text in real-time (keep last partial line in buffer)
+        // Stream real-time: flush complete lines, keep the last partial one
         const lastNl = buffer.lastIndexOf("\n");
         if (lastNl !== -1) {
-          onChunk(buffer.slice(0, lastNl + 1));
+          const chunk = stripAnswerTags(buffer.slice(0, lastNl + 1));
+          if (chunk) onChunk(chunk);
           buffer = buffer.slice(lastNl + 1);
         }
       }
     }
 
+    // ── Sources phase ─────────────────────────────────────────────────────
     if (phase === "sources") {
       const delimIdx = buffer.indexOf(CONV_DELIM);
       const sourcePart = delimIdx !== -1 ? buffer.slice(0, delimIdx) : buffer;
 
-      const lines = sourcePart.split("\n").filter((l) => l.trim());
       const sources: Source[] = [];
-      for (const line of lines) {
-        try {
-          sources.push(JSON.parse(line));
-        } catch {
-          /* skip malformed */
-        }
+      for (const line of sourcePart.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try { sources.push(JSON.parse(trimmed)); } catch { /* skip */ }
       }
       if (sources.length) onSources(sources);
 
@@ -192,10 +197,11 @@ async function parseStream(
         buffer = buffer.slice(delimIdx + CONV_DELIM.length);
         phase = "conversation";
       } else {
-        buffer = "";
+        buffer = ""; // consumed
       }
     }
 
+    // ── Conversation-ID phase ─────────────────────────────────────────────
     if (phase === "conversation" && buffer.trim()) {
       try {
         const json = JSON.parse(buffer.trim());
@@ -207,16 +213,13 @@ async function parseStream(
     }
   }
 
-  // Final flush for sources-only streams (follow-up has no CONVERSATION block)
+  // Final flush: follow-up streams end without a CONVERSATION block
   if (phase === "sources" && buffer.trim()) {
-    const lines = buffer.split("\n").filter((l) => l.trim());
     const sources: Source[] = [];
-    for (const line of lines) {
-      try {
-        sources.push(JSON.parse(line));
-      } catch {
-        /* skip */
-      }
+    for (const line of buffer.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try { sources.push(JSON.parse(trimmed)); } catch { /* skip */ }
     }
     if (sources.length) onSources(sources);
   }
@@ -429,10 +432,11 @@ export default function Dashboard() {
         headers: { Authorization: jwt },
       });
       const data = await res.json();
-      const conv = data.conversation;
+      // Support both { conversation } and { data: { conversation } } shapes
+      const conv = data.conversation ?? data?.data?.conversation;
       if (!conv) return;
 
-      // Group messages into pairs (User + optional following Assistant)
+      // Group messages into (User, Assistant?) pairs
       const msgs = conv.messages as Array<{ role: "User" | "Assistant"; content: string }>;
       const rebuiltTurns: ThreadTurn[] = [];
       for (let i = 0; i < msgs.length; ) {
@@ -440,15 +444,18 @@ export default function Dashboard() {
         if (!current) { i++; continue; }
         if (current.role === "User") {
           const next = msgs[i + 1];
-          const a = next?.role === "Assistant" ? next.content : "";
-          rebuiltTurns.push({ query: current.content, answer: a, sources: [] });
-          i += a ? 2 : 1;
+          // Strip <ANSWER> tags from stored assistant content
+          const rawAnswer = next?.role === "Assistant" ? next.content : "";
+          const answer = rawAnswer ? stripAnswerTags(rawAnswer) : "";
+          rebuiltTurns.push({ query: current.content, answer, sources: [] });
+          i += answer ? 2 : 1;
         } else {
           i++;
         }
       }
 
       setActiveConv({ id: conv.id, title: conv.title, turns: rebuiltTurns });
+      setActiveNav("home");
     } catch (err) {
       console.error("Failed to load conversation:", err);
     }
@@ -471,6 +478,8 @@ export default function Dashboard() {
     const tempConv: ActiveConversation = { id: "", title: query, turns: [newTurn] };
     setActiveConv(tempConv);
 
+    let convId = "";
+
     try {
       const res = await fetch(`${BACKEND_URL}/perplexity_ask`, {
         method: "POST",
@@ -478,14 +487,13 @@ export default function Dashboard() {
         body: JSON.stringify({ query }),
       });
 
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!res.body) throw new Error("No response body");
       const reader = res.body.getReader();
 
-      let convId = "";
-
       await parseStream(
         reader,
-        // onChunk – append answer text
+        // onChunk – strip tags then append
         (text) => {
           setActiveConv((prev) => {
             if (!prev) return prev;
@@ -516,17 +524,6 @@ export default function Dashboard() {
         }
       );
 
-      // Mark streaming done
-      setActiveConv((prev) => {
-        if (!prev) return prev;
-        const turns = [...prev.turns];
-        const lastIdx = turns.length - 1;
-        const lastTurn = turns[lastIdx];
-        if (!lastTurn) return prev;
-        turns[lastIdx] = { ...lastTurn, isStreaming: false };
-        return { ...prev, turns };
-      });
-
       // Refresh sidebar
       if (convId) await fetchConversations();
     } catch (err) {
@@ -537,10 +534,25 @@ export default function Dashboard() {
         const lastIdx = turns.length - 1;
         const lastTurn = turns[lastIdx];
         if (!lastTurn) return prev;
-        turns[lastIdx] = { ...lastTurn, isStreaming: false, answer: lastTurn.answer || "An error occurred." };
+        turns[lastIdx] = { ...lastTurn, answer: lastTurn.answer || "An error occurred." };
         return { ...prev, turns };
       });
     } finally {
+      // Always mark streaming done
+      setActiveConv((prev) => {
+        if (!prev) return prev;
+        const turns = [...prev.turns];
+        const lastIdx = turns.length - 1;
+        const lastTurn = turns[lastIdx];
+        if (!lastTurn) return prev;
+        // Final strip of any residual <ANSWER> tags on the full accumulated text
+        turns[lastIdx] = {
+          ...lastTurn,
+          answer: stripAnswerTags(lastTurn.answer),
+          isStreaming: false,
+        };
+        return { ...prev, turns };
+      });
       setIsStreaming(false);
     }
   };
@@ -563,12 +575,13 @@ export default function Dashboard() {
     );
 
     try {
-      const res = await fetch(`${BACKEND_URL}/purplexity_ask/follow_up`, {
+      const res = await fetch(`${BACKEND_URL}/perplexity_ask/follow_up`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: jwt },
         body: JSON.stringify({ conversationId: activeConv.id, query }),
       });
 
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!res.body) throw new Error("No response body");
       const reader = res.body.getReader();
 
@@ -596,30 +609,25 @@ export default function Dashboard() {
             return { ...prev, turns };
           });
         },
-        () => {} // follow-up doesn't send conversationId
+        () => {} // follow-up doesn't send a conversationId
       );
-
-      setActiveConv((prev) => {
-        if (!prev) return prev;
-        const turns = [...prev.turns];
-        const lastIdx = turns.length - 1;
-        const lastTurn = turns[lastIdx];
-        if (!lastTurn) return prev;
-        turns[lastIdx] = { ...lastTurn, isStreaming: false };
-        return { ...prev, turns };
-      });
     } catch (err) {
       console.error("Follow-up stream error:", err);
+    } finally {
+      // Always mark streaming done and strip residual tags
       setActiveConv((prev) => {
         if (!prev) return prev;
         const turns = [...prev.turns];
         const lastIdx = turns.length - 1;
         const lastTurn = turns[lastIdx];
         if (!lastTurn) return prev;
-        turns[lastIdx] = { ...lastTurn, isStreaming: false };
+        turns[lastIdx] = {
+          ...lastTurn,
+          answer: stripAnswerTags(lastTurn.answer),
+          isStreaming: false,
+        };
         return { ...prev, turns };
       });
-    } finally {
       setIsStreaming(false);
     }
   };
